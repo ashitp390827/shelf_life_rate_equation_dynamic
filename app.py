@@ -463,7 +463,8 @@ def kinetic_analysis_constant_temp_tab():
     df = st.session_state["kin_const_df"]
 
     # Time unit selector for input table (affects fitting and labels)
-    time_unit = st.selectbox("Time unit for input table", ["hours", "days"], index=0, key="kin_const_time_unit")
+    # Hardcode time_unit to "days"
+    time_unit = "days"
     st.dataframe(df.head(), width='stretch')
 
     if not {"time", "A"}.issubset(df.columns):
@@ -559,7 +560,7 @@ def kinetic_analysis_constant_temp_tab():
         k_per_h = best["k"]
         k_per_d = k_per_h * 24.0
         col1, col2 = st.columns(2)
-        col1.metric("k (per hour)", f"{k_per_h:.6f}")
+        # col1.metric("k (per hour)", f"{k_per_h:.6f}") # Hidden
         col2.metric("k (per day)", f"{k_per_d:.6f}")
 
         st.markdown("### 📊 Fitting Plots")
@@ -719,7 +720,8 @@ def kinetic_analysis_constant_temp_tab():
                 st.error(msg)
             else:
                 st.success("Shelf life computed.")
-                st.metric("Shelf life (hours)", f"{t_val:.2f}")
+                st.success("Shelf life computed.")
+                # st.metric("Shelf life (hours)", f"{t_val:.2f}") # Hidden
                 st.metric("Shelf life (days)", f"{t_val/24:.2f}")
 
 
@@ -944,12 +946,35 @@ def kinetic_direct_k_tab():
 #  MAIN APP WITH 6 TABS
 # ============================================================
 
-def main():
+
+# ============================================================
+#  MAIN APP
+# ============================================================
+
+from auth_manager import AuthManager
+
+def main_app_logic():
     st.set_page_config(page_title="Shelf Life Prediction", layout="wide")
     # Apply enhanced styling for modern design, better alignment and spacing
     apply_app_style(max_width=1200)
     st.title("📦 Shelf Life Prediction Application")
     st.caption("Predict product shelf life using kinetic modeling, temperature effects, and real-world conditions")
+
+    if not st.session_state.get("authentication_status"):
+        st.error("You must log in to continue.")
+        st.stop()
+
+    # Sidebar Logout
+    with st.sidebar:
+        st.markdown("---")
+        
+        # Show user role badge
+        from user_roles import show_role_badge
+        show_role_badge()
+        
+        auth_manager = AuthManager()
+        auth_manager.logout_widget()
+        st.caption(f"Logged in as: {auth_manager.get_user_name()}")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🏠 Home",
@@ -978,6 +1003,14 @@ def main():
     with tab6:
         kinetic_direct_k_tab()
 
+from login_page import show_login_page
+
+def main():
+    # Check authentication status
+    if not st.session_state.get("authentication_status"):
+        show_login_page()
+    else:
+        main_app_logic()
 
 if __name__ == "__main__":
     main()

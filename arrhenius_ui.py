@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-R_GAS = 8.314  # J/mol-K
+R_GAS = 8.3145  # J/mol-K
 
 
 # ============================================================
@@ -233,77 +233,54 @@ def arrhenius_fitting_tab():
     # Section: data input
     # --------------------------------------------------------
     st.subheader("📥 Enter Rate Constants at Different Temperatures")
-    st.caption("Provide rate constants (k) measured at different storage temperatures to build your model")
+    st.caption("Provide rate constants (k) measured at different storage temperatures (use time unit as day) to build your model")
 
-    # Group input controls into a form to improve alignment and avoid partial reruns
-    df = None
-    with st.form("arrhenius_form"):
+    # Hardcode k_input_unit to 1/day (hidden from user)
+    k_input_unit = "1/day"
+    st.session_state.arr_k_input_unit = k_input_unit
 
+    st.caption("Enter temperature (°C) and corresponding k values in the table below.")
 
-        k_input_unit = st.selectbox(
-            "k Unit (in your data):",
-            ["1/h", "1/day"],
-            index=0,
-            help="Will be internally converted to 1/h for fitting.",
-            key="arr_k_input_unit",
-        )
+    # Initialize the DF only once
+    if "arr_input_df" not in st.session_state:
+        st.session_state.arr_input_df = pd.DataFrame({
+            "T_C": [25.0, 35.0, 45.0],
+            "k": [0.05, 0.15, 0.45],
+        })
 
-        st.caption("Enter temperature (°C) and corresponding k values in the selected unit.")
-        n_rows = st.number_input(
-            "Number of data points",
-            min_value=2,
-            max_value=12,
-            value=3,
-            key="arr_n_rows",
-        )
-        rows = []
-        cols = st.columns(2)
-        for i in range(int(n_rows)):
-            with cols[i % 2]:
-                st.write(f"**Point {i+1}**")
-                T_C = st.number_input(
-                    f"T{i+1} (°C)",
-                    value=25.0 + 10.0 * i,
-                    key=f"arr_T_{i}",
-                )
-                k_val = st.number_input(
-                    f"k{i+1} ({k_input_unit})",
-                    value=0.05 * (i + 1),
-                    key=f"arr_k_{i}",
-                )
-            rows.append({"T_C": T_C, "k": k_val})
-            df = pd.DataFrame(rows)
+    # Use stable column config - don't include dynamic unit in the header
+    # This prevents the data_editor from resetting when unit changes
+    edited_df = st.data_editor(
+        st.session_state.arr_input_df,
+        column_config={
+            "T_C": st.column_config.NumberColumn(
+                "Temperature (°C)", format="%.1f", required=True
+            ),
+            "k": st.column_config.NumberColumn(
+                "Rate Constant (k) (1/day)", format="%.4f", required=True
+            ),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        key="arrhenius_data_editor",
+    )
 
-        st.markdown("""
-        <style>
-        div.stButton > button:first-child {
-            background-color: #1565c0;
-            color: white;
-            padding: 0.75em 1em;
-            font-size: 1.15rem;
-            font-weight: 600;
-            border-radius: 10px;
-            border: 2px solid #e65100;
-        }
-        div.stButton > button:first-child:hover {
-            background-color: #e65100;
-            border-color: #bf360c;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        st.markdown("#### 📊 Data Preview")
-        if df is None:
-            st.info("No data yet — provide manual points or upload a CSV and submit the form.")
+    # Don't update session state automatically - only when Fit button is clicked
+    # This prevents refresh issues during data entry
+
+    if st.button("🔬 Fit Arrhenius Model", key="arr_fit_btn"):
+        # Update session state with edited data when button is clicked
+        st.session_state.arr_input_df = edited_df
+        
+        # Validate and prepare data
+        try:
+            df_fit = edited_df.dropna().astype(float)
+            temps = df_fit["T_C"].values
+            ks = df_fit["k"].values
+        except Exception:
+            st.error("Invalid data. Please ensure all cells contain numbers.")
             return
-        st.dataframe(df, width='stretch')
 
-        submitted = st.form_submit_button("🔬 Fit Arrhenius  Model", key="arr_fit_btn")
-
-
-    temps = df["T_C"].values.astype(float)
-    ks = df["k"].values.astype(float)
-
-    if submitted:
         model, r2 = ArrheniusModel.fit_from_data(
             temps_C=temps,
             ks=ks,
@@ -412,12 +389,9 @@ def arrhenius_fitting_tab():
             key="arr_T_pred",
         )
     with c2:
-        out_unit = st.selectbox(
-            "📍 Output k unit",
-            ["1/h", "1/day"],
-            index=0,
-            key="arr_out_unit",
-        )
+        st.markdown("**Output unit**")
+        st.caption("Per day (1/day)")
+        out_unit = "1/day"
 
     if st.button("🧮 Predict k", key="arr_predict_btn"):
         k_pred = current_model.predict_k(T_pred, out_unit=out_unit)

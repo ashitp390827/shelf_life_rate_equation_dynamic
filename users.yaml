@@ -1,0 +1,13 @@
+credentials:
+  usernames:
+    # Example user structure (will be populated by registration)
+    # jdoe:
+    #   email: jdoe@gmail.com
+    #   name: John Doe
+    #   password: hashed_password_here
+cookie:
+  expiry_days: 30
+  key: random_signature_key
+  name: shelf_life_auth_cookie
+preauthorized:
+  emails: []

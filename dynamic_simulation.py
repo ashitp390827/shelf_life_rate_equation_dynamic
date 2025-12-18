@@ -401,15 +401,9 @@ def _plot_single_history(df: pd.DataFrame, k_unit: str = "1/h"):
     from plotly.subplots import make_subplots
 
     # If the time series spans many hours, plot time in days for readability
-    t_min = float(df["time_h"].min()) if not df["time_h"].empty else 0.0
-    t_max = float(df["time_h"].max()) if not df["time_h"].empty else 0.0
-    span_h = t_max - t_min
-    if span_h > 48.0:
-        x_vals = df["time_h"] / 24.0
-        x_label = "Time (days)"
-    else:
-        x_vals = df["time_h"]
-        x_label = "Time (hours)"
+    # Always plot in days as per requirement
+    x_vals = df["time_h"] / 24.0
+    x_label = "Time (days)"
 
     # Create figure with secondary y-axis and a clean white template
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -469,12 +463,9 @@ def _plot_single_history(df: pd.DataFrame, k_unit: str = "1/h"):
 
     # Use same x unit for k plot
     df_k_plot = df_k.copy()
-    if span_h > 48.0:
-        df_k_plot["x_plot"] = df_k_plot["time_h"] / 24.0
-        k_xlabel = "Time (days)"
-    else:
-        df_k_plot["x_plot"] = df_k_plot["time_h"]
-        k_xlabel = "Time (hours)"
+    # Always plot in days
+    df_k_plot["x_plot"] = df_k_plot["time_h"] / 24.0
+    k_xlabel = "Time (days)"
 
     fig_k = px.line(df_k_plot, x="x_plot", y="k_out", title=k_label, template="plotly_white")
     fig_k.update_traces(line_color="#2E7D32", line_width=2.5, mode="lines")
@@ -607,34 +598,19 @@ Professional, reproducible simulations of shelf life under a time-varying temper
     # ---------------- Arrhenius model ----------------
     with st.expander("Arrhenius model", expanded=True):
         existing_model = _get_arrhenius_model_from_session()
-        mode = st.radio(
-            "Choose source of Arrhenius model",
-            ["Use model from Arrhenius tab", "Enter parameters manually"],
-            index=0 if existing_model else 1,
-            key="dyn_arrhenius_mode",
-        )
-
+        existing_model = _get_arrhenius_model_from_session()
+        
+        # Enforce using model from Arrhenius tab
         model: Optional[ArrheniusModel] = None
 
-        if mode == "Use model from Arrhenius tab":
-            if existing_model is None:
-                st.warning("No model found in session. Please fit or load one in the Arrhenius tab.")
-            else:
-                model = existing_model
-                st.success("Using Arrhenius model from session.")
-                st.write(f"**ln A:** {model.lnA:.4f}")
-                st.write(f"**A (1/h):** {math.exp(model.lnA):.3e}")
-                st.write(f"**Ea:** {model.Ea_J_mol/1000.0:.3f} kJ/mol")
+        if existing_model is None:
+            st.warning("No model found in session. Please fit or load one in the Arrhenius tab.")
         else:
-            lnA = st.number_input("ln A (1/h)", value=20.0, key="dyn_lnA")
-            Ea_kJ = st.number_input("Ea (kJ/mol)", value=80.0, key="dyn_Ea_kJ")
-            model = ArrheniusModel(
-                lnA=float(lnA),
-                Ea_J_mol=float(Ea_kJ * 1000.0),
-                k_unit="1/h",
-                name="Manual model",
-            )
-            st.info("Using manually specified Arrhenius parameters.")
+            model = existing_model
+            st.success("Using Arrhenius model from session.")
+            st.write(f"**ln A:** {model.lnA:.4f}")
+            st.write(f"**A (1/h):** {math.exp(model.lnA):.3e}")
+            st.write(f"**Ea:** {model.Ea_J_mol/1000.0:.3f} kJ/mol")
 
     if model is None:
         st.warning("No Arrhenius model available. Fit or load a model in the Arrhenius tab.")
@@ -644,7 +620,7 @@ Professional, reproducible simulations of shelf life under a time-varying temper
     st.subheader("Temperature profile")
 
     uploaded = st.file_uploader(
-        "Upload temperature profile CSV (columns: time_h, temp_C)",
+        "Upload temperature profile CSV (columns: time_h, temp_C) - Note: time_h is treated as hours internally, ensure your data is consistent or use synthetic.",
         type=["csv"],
         key="dyn_tempfile",
     )
@@ -672,7 +648,9 @@ Professional, reproducible simulations of shelf life under a time-varying temper
         df_temp = pd.DataFrame({"time_h": t, "temp_C": T})
 
     df_temp = _ensure_df_temp(df_temp)
-    st.dataframe(df_temp.head(), width='stretch')
+    
+    with st.expander("View Temperature Data", expanded=False):
+        st.dataframe(df_temp.head(), width='stretch')
 
     if not {"time_h", "temp_C"}.issubset(df_temp.columns):
         st.error("CSV must contain 'time_h' and 'temp_C'.")
@@ -735,22 +713,57 @@ Professional, reproducible simulations of shelf life under a time-varying temper
                 st.warning("Simulation produced no history. Check inputs and model.")
             else:
                 df_hist = pd.DataFrame(result.history)
-                st.markdown("#### Simulation data (head)")
-                st.dataframe(df_hist.head(), width='stretch')
+                
+                # Create tabs for results
+                tab_overview, tab_rate, tab_data = st.tabs(["📊 Overview", "📉 Rate Constant", "💾 Data"])
+                
+                with tab_overview:
+                    _summarize_single_simulation(result, kinetics)
+                    _plot_single_history(df_hist, k_unit="1/day")
+                
+                with tab_rate:
+                    st.markdown("#### Rate Constant Evolution")
+                    # Force k_unit to 1/day for plotting
+                    # We need to extract the k plotting logic from _plot_single_history or just call it?
+                    # _plot_single_history plots BOTH. Let's refactor _plot_single_history slightly or just copy the k-plot part here.
+                    # Actually, _plot_single_history does both. Let's split it or just call a new helper.
+                    # For now, I will inline the k-plot logic here to separate it, or modify _plot_single_history.
+                    # To avoid changing helper signature too much, I'll just manually plot k here using the same code.
+                    
+                    # Plot k separately
+                    import plotly.express as px
+                    df_k = df_hist.copy()
+                    # Always 1/day
+                    df_k["k_out"] = df_k["k_1_per_h"] * 24.0
+                    k_label = "Rate Constant k vs Time (1/day)"
+                    df_k["x_plot"] = df_k["time_h"] / 24.0
+                    k_xlabel = "Time (days)"
 
-                _summarize_single_simulation(result, kinetics)
-                _plot_single_history(df_hist, k_unit="1/h")
+                    fig_k = px.line(df_k, x="x_plot", y="k_out", title=k_label, template="plotly_white")
+                    fig_k.update_traces(line_color="#2E7D32", line_width=2.5, mode="lines")
+                    fig_k.update_xaxes(title_text=k_xlabel, title_font_size=13)
+                    fig_k.update_yaxes(title_font_size=13)
+                    fig_k.update_layout(
+                        title_font_size=16,
+                        title_font_color="#2E7D32",
+                        margin=dict(t=60, b=40)
+                    )
+                    st.plotly_chart(fig_k, use_container_width=True)
 
-                # Download with timestamped filename
-                ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-                csv_data = df_hist.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    label="Download dynamic simulation CSV",
-                    data=csv_data,
-                    file_name=f"dynamic_simulation_history_{ts}.csv",
-                    mime="text/csv",
-                    key="dyn_download_hist",
-                )
+                with tab_data:
+                    st.markdown("#### Simulation data (head)")
+                    st.dataframe(df_hist.head(), width='stretch')
+                    
+                    # Download with timestamped filename
+                    ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+                    csv_data = df_hist.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="Download dynamic simulation CSV",
+                        data=csv_data,
+                        file_name=f"dynamic_simulation_history_{ts}.csv",
+                        mime="text/csv",
+                        key="dyn_download_hist",
+                    )
 
 
 # ============================================================
@@ -764,39 +777,26 @@ def ensemble_dynamic_simulation_tab():
     # ---------------- Arrhenius model ----------------
     with st.expander("🌡️ Temperature Model Setup", expanded=True):
         existing_model = _get_arrhenius_model_from_session()
-        mode = st.radio(
-            "Choose source of Arrhenius model",
-            ["Use model from Arrhenius tab", "Enter parameters manually"],
-            index=0 if existing_model else 1,
-            key="ens_arrhenius_mode",
-        )
-
+        existing_model = _get_arrhenius_model_from_session()
+        
+        # Enforce using model from Arrhenius tab
         model: Optional[ArrheniusModel] = None
-        if mode == "Use model from Arrhenius tab":
-            if existing_model is None:
-                st.warning("No model found in session. Please fit or load one in the Arrhenius tab.")
-            else:
-                model = existing_model
-                st.success("Using Arrhenius model from session.")
-                # Show full model parameters for clarity
-                st.write(f"**Name:** {model.name}")
-                st.write(f"**ln A:** {model.lnA:.4f}")
-                st.write(f"**A (1/h):** {math.exp(model.lnA):.3e}")
-                st.write(f"**Ea:** {model.Ea_J_mol/1000.0:.3f} kJ/mol")
-                st.write(f"**k base unit:** {model.k_unit}")
-                try:
-                    st.code(model.to_json(), language="json")
-                except Exception:
-                    pass
+        
+        if existing_model is None:
+            st.warning("No model found in session. Please fit or load one in the Arrhenius tab.")
         else:
-            lnA = st.number_input("ln A (1/h)", value=20.0, key="ens_lnA")
-            Ea_kJ = st.number_input("Ea (kJ/mol)", value=80.0, key="ens_Ea_kJ")
-            model = ArrheniusModel(
-                lnA=float(lnA),
-                Ea_J_mol=float(Ea_kJ * 1000.0),
-                k_unit="1/h",
-                name="Manual ensemble model",
-            )
+            model = existing_model
+            st.success("Using Arrhenius model from session.")
+            # Show full model parameters for clarity
+            st.write(f"**Name:** {model.name}")
+            st.write(f"**ln A:** {model.lnA:.4f}")
+            st.write(f"**A (1/h):** {math.exp(model.lnA):.3e}")
+            st.write(f"**Ea:** {model.Ea_J_mol/1000.0:.3f} kJ/mol")
+            st.write(f"**k base unit:** {model.k_unit}")
+            try:
+                st.code(model.to_json(), language="json")
+            except Exception:
+                pass
 
     if model is None:
         st.warning("No Arrhenius model found for ensemble. Fit or load one in the Arrhenius tab.")
@@ -806,8 +806,20 @@ def ensemble_dynamic_simulation_tab():
     st.subheader("📊 Temperature Data Source")
     st.caption("Choose how to provide temperature data for your simulations")
 
-    temp_choices = ["Fetch by city (Open-Meteo)", "Generate synthetic"]
-    default_idx = 0 if _OPENMETEO_AVAILABLE else 1
+    # Check if user has premium access
+    from user_roles import is_premium_user
+    has_premium = is_premium_user()
+    
+    # Build temperature data source choices based on user role
+    if has_premium:
+        temp_choices = ["Fetch by city (Open-Meteo)", "Generate synthetic"]
+        default_idx = 0 if _OPENMETEO_AVAILABLE else 1
+    else:
+        # Basic users only get synthetic option
+        temp_choices = ["Generate synthetic"]
+        default_idx = 0
+        st.info("🔒 ** Simulation using historic weather data** is a disabled for this account. Contact through ashitp02@gamil.com to access real-world temperature data from any city.")
+    
     input_mode = st.radio(
         "Temperature data source",
         temp_choices,
@@ -965,8 +977,10 @@ def ensemble_dynamic_simulation_tab():
     saved_df = st.session_state.get("ens_df_temp")
     if saved_df is not None and isinstance(saved_df, pd.DataFrame):
         df_temp = saved_df
-    st.markdown("**Selected temperature series (head)**")
-    st.dataframe(df_temp.head(), use_container_width=True)
+    
+    with st.expander("View Selected Temperature Series", expanded=False):
+        st.markdown("**Selected temperature series (head)**")
+        st.dataframe(df_temp.head(), use_container_width=True)
 
     if not {"time_h", "temp_C"}.issubset(df_temp.columns):
         st.error("CSV must contain 'time_h' and 'temp_C'.")
@@ -1064,12 +1078,8 @@ def ensemble_dynamic_simulation_tab():
     )
 
     # Allow user to choose k unit for outputs/plots (1/h or 1/day)
-    k_output_unit = st.selectbox(
-        "k unit for plots and tables",
-        ["1/h", "1/day"],
-        index=0,
-        key="ens_k_output_unit",
-    )
+    # Hardcode k_output_unit to 1/day
+    k_output_unit = "1/day"
 
     if st.button("Run ensemble simulations", key="ens_run_btn"):
         # Wrap long-running ensemble execution in a spinner to improve UX
@@ -1184,206 +1194,229 @@ def ensemble_dynamic_simulation_tab():
             st.error("No valid simulations were performed.")
             return
 
+
+
         df_runs = pd.DataFrame(runs)
-        st.markdown("#### Ensemble results (head)")
-        st.dataframe(df_runs.head(), use_container_width=True)
-
-        # ---------- Export CSV ----------
-        csv_data = df_runs.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download ensemble results CSV",
-            data=csv_data,
-            file_name="ensemble_dynamic_results.csv",
-            mime="text/csv",
-            key="ens_download_csv",
-        )
-
-        # ---------- Numeric summary ----------
-        st.markdown("### 📊 Ensemble summary")
-
-        total_runs = len(df_runs)
-        reached_mask = df_runs["shelf_life_h"].notnull()
-        n_reached = int(reached_mask.sum())
-        n_censored = int(total_runs - n_reached)
-
-        ca, cb, cc = st.columns(3)
-        ca.metric("Total simulations", f"{total_runs}")
-        cb.metric("Reached Ai", f"{n_reached}")
-        cc.metric("Not reached (censored)", f"{n_censored}")
-
-        # Prepare data for stats based on censored option
-        df_stats = df_runs.copy()
         
-        if censored_option == "Use window length (conservative)":
-            # Fill NaNs with window_hours
-            df_stats["shelf_life_h"] = df_stats["shelf_life_h"].fillna(window_hours)
-            # All runs are considered for stats
-            valid_stats_mask = pd.Series([True] * len(df_stats), index=df_stats.index)
-            st.info(f"Including {n_censored} censored runs as {window_days:.2f} days (conservative).")
-        else:
-            # Exclude NaNs
-            valid_stats_mask = reached_mask
-            if n_censored > 0:
-                st.info(f"Excluding {n_censored} censored runs from statistics.")
+        # Create tabs for ensemble results
+        tab_sum, tab_season, tab_extreme, tab_raw = st.tabs([
+            "📊 Summary & Distribution", 
+            "📅 Seasonal Analysis", 
+            "🔴/🟢 Extreme Cases", 
+            "💾 Raw Data"
+        ])
 
-        if valid_stats_mask.sum() > 0:
-            shelf_days = df_stats.loc[valid_stats_mask, "shelf_life_h"].astype(float) / 24.0
-            p5 = float(shelf_days.quantile(0.05))
-            p50 = float(shelf_days.quantile(0.50))
-            p95 = float(shelf_days.quantile(0.95))
-            min_d = float(shelf_days.min())
-            max_d = float(shelf_days.max())
+        with tab_raw:
+            st.markdown("#### Ensemble results (head)")
+            st.dataframe(df_runs.head(), use_container_width=True)
 
-            st.markdown("**Shelf-life distribution:**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Median shelf life", f"{p50:.2f} days")
-            c2.metric("5–95% range", f"{p5:.2f} – {p95:.2f} days")
-            c3.metric("Min / Max", f"{min_d:.2f} – {max_d:.2f} days")
-
-            # Colorful histogram with percentile/median markers
-            fig_hist = px.histogram(
-                shelf_days,
-                x=shelf_days,
-                nbins=30,
-                title="Shelf life distribution (days)",
-                labels={"x": "Shelf life (days)"},
-                color_discrete_sequence=["#1f77b4"],
-                template="plotly_white",
+            # ---------- Export CSV ----------
+            csv_data = df_runs.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="Download ensemble results CSV",
+                data=csv_data,
+                file_name="ensemble_dynamic_results.csv",
+                mime="text/csv",
+                key="ens_download_csv",
             )
-            fig_hist.update_layout(margin=dict(t=40, b=30))
-            # Add vertical lines for p5/p50/p95
-            fig_hist.add_vline(x=p50, line_width=2, line_dash="dash", line_color="#000000")
-            fig_hist.add_vline(x=p5, line_width=1, line_dash="dot", line_color="#555555")
-            fig_hist.add_vline(x=p95, line_width=1, line_dash="dot", line_color="#555555")
-            fig_hist.add_annotation(x=p50, y=1, yanchor="bottom", text=f"Median {p50:.2f}d", showarrow=False)
 
-            # ECDF (cumulative failure curve)
-            try:
-                fig_cdf = px.ecdf(shelf_days, x=shelf_days, title="Cumulative failure (ECDF)", labels={"x": "Shelf life (days)"}, template="plotly_white")
-            except Exception:
-                s = np.sort(shelf_days.to_numpy())
-                cum = np.arange(1, len(s) + 1) / float(len(s))
-                fig_cdf = px.line(x=s, y=cum, title="Cumulative failure (ECDF)", labels={"x": "Shelf life (days)", "y": "Cumulative fraction"}, template="plotly_white")
-            # Mark key percentiles on the ECDF
-            fig_cdf.add_vline(x=p50, line_width=2, line_dash="dash", line_color="#000000")
-            fig_cdf.add_vline(x=p95, line_width=1, line_dash="dot", line_color="#555555")
+        with tab_sum:
+            # ---------- Numeric summary ----------
+            st.markdown("### 📊 Ensemble summary")
 
-            # Violin + box for spread (compact, smaller marker)
-            N_points = int(len(shelf_days))
-            violin_points = "all" if N_points <= 300 else "outliers"
-            fig_violin = px.violin(
-                y=shelf_days,
-                box=True,
-                points=violin_points,
-                title="Distribution (violin + box)",
-                template="plotly_white",
-                color_discrete_sequence=["#EF553B"]
-            )
-            fig_violin.update_traces(marker=dict(size=4, opacity=0.6))
+            total_runs = len(df_runs)
+            reached_mask = df_runs["shelf_life_h"].notnull()
+            n_reached = int(reached_mask.sum())
+            n_censored = int(total_runs - n_reached)
 
-            # Arrange a compact dashboard: histogram + violin on the left, ECDF to the right
-            col_left, col_right = st.columns([2, 1])
-            with col_left:
-                st.plotly_chart(fig_hist, use_container_width=True)
-                st.plotly_chart(fig_violin, use_container_width=True)
-            with col_right:
-                st.plotly_chart(fig_cdf, use_container_width=True)
-                st.markdown("**Notes:** Vertical dashed line = median; dotted = 5/95th percentiles.")
-        else:
-            st.warning("No valid data for statistics (all runs censored and excluded).")
+            ca, cb, cc = st.columns(3)
+            ca.metric("Total simulations", f"{total_runs}")
+            cb.metric("Reached Ai", f"{n_reached}")
+            cc.metric("Not reached (censored)", f"{n_censored}")
 
-        # ---------- Month & year analysis ----------
-        # For month/year, we need a date. If censored, we can't easily assign a failure date.
-        # So we only plot failures that actually happened, OR we project the date for censored ones?
-        # Let's stick to actual failures for the calendar plots to avoid confusion, 
-        # or maybe include them if "Use window length" is selected?
-        # A conservative approach for calendar is to use the end of window date.
-        
-        if censored_option == "Use window length (conservative)":
-             # Fill missing dates with start_time + window
-             mask_nan_date = df_stats["shelf_datetime"].isnull()
-             if mask_nan_date.any():
-                 # Calculate end dates for these
-                 # We need start times.
-                 # df_runs has start_time_h.
-                 # base_dt is start_date (calendar).
-                 # shelf_datetime = start_date + start_time_h + window_hours
-                 
-                 # Vectorized date calc might be tricky with pandas series of floats + date object
-                 # Do a loop or apply. Use the inferred `base_dt` (calendar anchor) if available.
-                 if base_dt is not None:
-                     base_dt_ts = pd.to_datetime(base_dt)
-
-                     def _calc_end_date(row):
-                         if pd.isnull(row["shelf_datetime"]):
-                             hours = row["start_time_h"] + window_hours
-                             return base_dt_ts + timedelta(hours=hours)
-                         return row["shelf_datetime"]
-
-                     df_stats["shelf_datetime"] = df_stats.apply(_calc_end_date, axis=1)
-                 else:
-                     # Cannot fill calendar dates without an anchor; leave as NaN
-                     pass
-
-        if df_stats["shelf_datetime"].notnull().any():
-            # Filter for valid stats mask if we are excluding
-            if censored_option == "Exclude from stats":
-                 df_dt = df_stats[valid_stats_mask].copy()
+            # Prepare data for stats based on censored option
+            df_stats = df_runs.copy()
+            
+            if censored_option == "Use window length (conservative)":
+                # Fill NaNs with window_hours
+                df_stats["shelf_life_h"] = df_stats["shelf_life_h"].fillna(window_hours)
+                # All runs are considered for stats
+                valid_stats_mask = pd.Series([True] * len(df_stats), index=df_stats.index)
+                st.info(f"Including {n_censored} censored runs as {window_days:.2f} days (conservative).")
             else:
-                 df_dt = df_stats.copy()
+                # Exclude NaNs
+                valid_stats_mask = reached_mask
+                if n_censored > 0:
+                    st.info(f"Excluding {n_censored} censored runs from statistics.")
 
-            if not df_dt.empty:
-                df_dt["shelf_datetime"] = pd.to_datetime(df_dt["shelf_datetime"])
-                df_dt["year"] = df_dt["shelf_datetime"].dt.year
-                df_dt["month"] = df_dt["shelf_datetime"].dt.month
-                df_dt["shelf_days"] = df_dt["shelf_life_h"] / 24.0
-    
-                st.markdown("### Calendar analysis")
-    
-                # (Removed failure-counts-by-year histogram as requested)
+            if valid_stats_mask.sum() > 0:
+                shelf_days = df_stats.loc[valid_stats_mask, "shelf_life_h"].astype(float) / 24.0
+                p5 = float(shelf_days.quantile(0.05))
+                p50 = float(shelf_days.quantile(0.50))
+                p95 = float(shelf_days.quantile(0.95))
+                min_d = float(shelf_days.min())
+                max_d = float(shelf_days.max())
 
-                # Compute simulation start datetime (if base_dt is available) so we can
-                # group by the month the simulation started. Use start_time_h (hours offset)
-                # from the original runs.
-                if base_dt is not None and "start_time_h" in df_dt.columns:
-                    try:
-                        df_dt["start_datetime"] = pd.to_datetime(base_dt) + pd.to_timedelta(df_dt["start_time_h"].astype(float), unit='h')
-                        df_dt["start_year"] = df_dt["start_datetime"].dt.year
-                        df_dt["start_month"] = df_dt["start_datetime"].dt.month
-                        # Map month numbers to short names for display and enforce chronological order
-                        month_names = {i: pd.Timestamp(2000, i, 1).strftime('%b') for i in range(1, 13)}
-                        df_dt["start_month_name"] = df_dt["start_month"].map(month_names)
+                st.markdown("**Shelf-life distribution:**")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Median shelf life", f"{p50:.2f} days")
+                c2.metric("5–95% range", f"{p5:.2f} – {p95:.2f} days")
+                c3.metric("Min / Max", f"{min_d:.2f} – {max_d:.2f} days")
 
-                        # Ensure chronological order Jan..Dec
-                        month_order = [pd.Timestamp(2000, i, 1).strftime('%b') for i in range(1, 13)]
+                # Colorful histogram with percentile/median markers
+                fig_hist = px.histogram(
+                    shelf_days,
+                    x=shelf_days,
+                    nbins=30,
+                    title="Shelf life distribution (days)",
+                    labels={"x": "Shelf life (days)"},
+                    color_discrete_sequence=["#1f77b4"],
+                    template="plotly_white",
+                )
+                fig_hist.update_layout(margin=dict(t=40, b=30))
+                # Add vertical lines for p5/p50/p95
+                fig_hist.add_vline(x=p50, line_width=2, line_dash="dash", line_color="#000000")
+                fig_hist.add_vline(x=p5, line_width=1, line_dash="dot", line_color="#555555")
+                fig_hist.add_vline(x=p95, line_width=1, line_dash="dot", line_color="#555555")
+                fig_hist.add_annotation(x=p50, y=1, yanchor="bottom", text=f"Median {p50:.2f}d", showarrow=False)
+
+                # ECDF (cumulative failure curve)
+                try:
+                    fig_cdf = px.ecdf(shelf_days, x=shelf_days, title="Cumulative failure (ECDF)", labels={"x": "Shelf life (days)"}, template="plotly_white")
+                except Exception:
+                    s = np.sort(shelf_days.to_numpy())
+                    cum = np.arange(1, len(s) + 1) / float(len(s))
+                    fig_cdf = px.line(x=s, y=cum, title="Cumulative failure (ECDF)", labels={"x": "Shelf life (days)", "y": "Cumulative fraction"}, template="plotly_white")
+                # Mark key percentiles on the ECDF
+                fig_cdf.add_vline(x=p50, line_width=2, line_dash="dash", line_color="#000000")
+                fig_cdf.add_vline(x=p95, line_width=1, line_dash="dot", line_color="#555555")
+
+                # Violin + box for spread (compact, smaller marker)
+                N_points = int(len(shelf_days))
+                violin_points = "all" if N_points <= 300 else "outliers"
+                fig_violin = px.violin(
+                    y=shelf_days,
+                    box=True,
+                    points=violin_points,
+                    title="Distribution (violin + box)",
+                    template="plotly_white",
+                    color_discrete_sequence=["#EF553B"]
+                )
+                fig_violin.update_traces(marker=dict(size=4, opacity=0.6))
+
+                # Arrange a compact dashboard: histogram + violin on the left, ECDF to the right
+                col_left, col_right = st.columns([2, 1])
+                with col_left:
+                    st.plotly_chart(fig_hist, use_container_width=True)
+                    st.plotly_chart(fig_violin, use_container_width=True)
+                with col_right:
+                    st.plotly_chart(fig_cdf, use_container_width=True)
+                    st.markdown("**Notes:** Vertical dashed line = median; dotted = 5/95th percentiles.")
+            else:
+                st.warning("No valid data for statistics (all runs censored and excluded).")
+
+        with tab_season:
+            # ---------- Month & year analysis ----------
+            # For month/year, we need a date. If censored, we can't easily assign a failure date.
+            # So we only plot failures that actually happened, OR we project the date for censored ones?
+            # Let's stick to actual failures for the calendar plots to avoid confusion, 
+            # or maybe include them if "Use window length" is selected?
+            # A conservative approach for calendar is to use the end of window date.
+            
+            if censored_option == "Use window length (conservative)":
+                 # Fill missing dates with start_time + window
+                 mask_nan_date = df_stats["shelf_datetime"].isnull()
+                 if mask_nan_date.any():
+                     # Calculate end dates for these
+                     # We need start times.
+                     # df_runs has start_time_h.
+                     # base_dt is start_date (calendar).
+                     # shelf_datetime = start_date + start_time_h + window_hours
+                     
+                     # Vectorized date calc might be tricky with pandas series of floats + date object
+                     # Do a loop or apply. Use the inferred `base_dt` (calendar anchor) if available.
+                     if base_dt is not None:
+                         base_dt_ts = pd.to_datetime(base_dt)
+
+                         def _calc_end_date(row):
+                             if pd.isnull(row["shelf_datetime"]):
+                                 hours = row["start_time_h"] + window_hours
+                                 return base_dt_ts + timedelta(hours=hours)
+                             return row["shelf_datetime"]
+
+                         df_stats["shelf_datetime"] = df_stats.apply(_calc_end_date, axis=1)
+                     else:
+                         # Cannot fill calendar dates without an anchor; leave as NaN
+                         pass
+
+            if df_stats["shelf_datetime"].notnull().any():
+                # Filter for valid stats mask if we are excluding
+                if censored_option == "Exclude from stats":
+                     df_dt = df_stats[valid_stats_mask].copy()
+                else:
+                     df_dt = df_stats.copy()
+
+                if not df_dt.empty:
+                    df_dt["shelf_datetime"] = pd.to_datetime(df_dt["shelf_datetime"])
+                    df_dt["year"] = df_dt["shelf_datetime"].dt.year
+                    df_dt["month"] = df_dt["shelf_datetime"].dt.month
+                    df_dt["shelf_days"] = df_dt["shelf_life_h"] / 24.0
+        
+                    st.markdown("### Calendar analysis")
+        
+                    # (Removed failure-counts-by-year histogram as requested)
+
+                    # Compute simulation start datetime (if base_dt is available) so we can
+                    # group by the month the simulation started. Use start_time_h (hours offset)
+                    # from the original runs.
+                    if base_dt is not None and "start_time_h" in df_dt.columns:
                         try:
-                            df_dt["start_month_name"] = pd.Categorical(df_dt["start_month_name"], categories=month_order, ordered=True)
-                        except Exception:
-                            pass
+                            df_dt["start_datetime"] = pd.to_datetime(base_dt) + pd.to_timedelta(df_dt["start_time_h"].astype(float), unit='h')
+                            df_dt["start_year"] = df_dt["start_datetime"].dt.year
+                            df_dt["start_month"] = df_dt["start_datetime"].dt.month
+                            # Map month numbers to short names for display and enforce chronological order
+                            month_names = {i: pd.Timestamp(2000, i, 1).strftime('%b') for i in range(1, 13)}
+                            df_dt["start_month_name"] = df_dt["start_month"].map(month_names)
 
-                        # Box plot of shelf life by simulation START month (chronological order)
-                        N_month = len(df_dt)
-                        month_points = "all" if N_month <= 300 else "outliers"
-                        fig_start_month_box = px.box(
-                            df_dt,
-                            x="start_month_name",
-                            y="shelf_days",
-                            points=month_points,
-                            title="Shelf life (days) by simulation start month",
-                            labels={"start_month_name": "Start month", "shelf_days": "Shelf life (days)"},
-                            template="plotly_white",
-                            category_orders={"start_month_name": month_order},
-                            hover_data=["run_id", "shelf_days"],
-                        )
-                        fig_start_month_box.update_traces(marker=dict(size=4, opacity=0.7))
-                        # Display start-month boxplot and year boxplot side-by-side for quick comparison
-                        col_month, col_year = st.columns([2, 1])
-                        with col_month:
-                            st.plotly_chart(fig_start_month_box, use_container_width=True)
-                            st.caption("Months refer to the calendar month when each simulation started (based on the calendar anchor). Boxes show distribution of shelf life; individual points are simulation runs.")
-                        # The year boxplot is generated below; render it in the right column after creation.
-                    except Exception:
-                        # Fallback: if anything fails, show a simple month histogram
+                            # Ensure chronological order Jan..Dec
+                            month_order = [pd.Timestamp(2000, i, 1).strftime('%b') for i in range(1, 13)]
+                            try:
+                                df_dt["start_month_name"] = pd.Categorical(df_dt["start_month_name"], categories=month_order, ordered=True)
+                            except Exception:
+                                pass
+
+                            # Box plot of shelf life by simulation START month (chronological order)
+                            N_month = len(df_dt)
+                            month_points = "all" if N_month <= 300 else "outliers"
+                            fig_start_month_box = px.box(
+                                df_dt,
+                                x="start_month_name",
+                                y="shelf_days",
+                                points=month_points,
+                                title="Shelf life (days) by simulation start month",
+                                labels={"start_month_name": "Start month", "shelf_days": "Shelf life (days)"},
+                                template="plotly_white",
+                                category_orders={"start_month_name": month_order},
+                                hover_data=["run_id", "shelf_days"],
+                            )
+                            fig_start_month_box.update_traces(marker=dict(size=4, opacity=0.7))
+                            # Display start-month boxplot and year boxplot side-by-side for quick comparison
+                            col_month, col_year = st.columns([2, 1])
+                            with col_month:
+                                st.plotly_chart(fig_start_month_box, use_container_width=True)
+                                st.caption("Months refer to the calendar month when each simulation started (based on the calendar anchor). Boxes show distribution of shelf life; individual points are simulation runs.")
+                            # The year boxplot is generated below; render it in the right column after creation.
+                        except Exception:
+                            # Fallback: if anything fails, show a simple month histogram
+                            fig_month = px.histogram(
+                                df_dt,
+                                x="month",
+                                title="Counts of failures by month",
+                                template="plotly_white",
+                            )
+                            st.plotly_chart(fig_month, use_container_width=True)
+                    else:
+                        # No base_dt/start_time — fall back to failure-month histogram
                         fig_month = px.histogram(
                             df_dt,
                             x="month",
@@ -1391,90 +1424,81 @@ def ensemble_dynamic_simulation_tab():
                             template="plotly_white",
                         )
                         st.plotly_chart(fig_month, use_container_width=True)
-                else:
-                    # No base_dt/start_time — fall back to failure-month histogram
-                    fig_month = px.histogram(
+
+                    # Keep the failure-year boxplot (shelf_datetime year)
+                    fig_box = px.box(
                         df_dt,
-                        x="month",
-                        title="Counts of failures by month",
+                        x="year",
+                        y="shelf_days",
+                        points="all",
+                        title="Shelf life (days) by failure year",
                         template="plotly_white",
                     )
-                    st.plotly_chart(fig_month, use_container_width=True)
-
-                # Keep the failure-year boxplot (shelf_datetime year)
-                fig_box = px.box(
-                    df_dt,
-                    x="year",
-                    y="shelf_days",
-                    points="all",
-                    title="Shelf life (days) by failure year",
-                    template="plotly_white",
-                )
-                # If we previously created the month/year columns, put this in the right column; otherwise render normally
-                try:
-                    with col_year:
+                    # If we previously created the month/year columns, put this in the right column; otherwise render normally
+                    try:
+                        with col_year:
+                            st.plotly_chart(fig_box, use_container_width=True)
+                    except Exception:
                         st.plotly_chart(fig_box, use_container_width=True)
-                except Exception:
-                    st.plotly_chart(fig_box, use_container_width=True)
-        else:
-            st.info("No shelf_datetime info; month/year plots not available.")
+            else:
+                st.info("No shelf_datetime info; month/year plots not available.")
 
-        # ---------- Worst and best case runs ----------
-        st.markdown("### 🔴 Worst-case & 🟢 Best-case runs")
+        with tab_extreme:
+            # ---------- Worst and best case runs ----------
+            st.markdown("### 🔴 Worst-case & 🟢 Best-case runs")
 
-        # Use df_stats which might include censored values
-        if valid_stats_mask.sum() == 0:
-            st.info("No valid runs to determine worst/best cases.")
-            return
+            # Use df_stats which might include censored values
+            if valid_stats_mask.sum() == 0:
+                st.info("No valid runs to determine worst/best cases.")
+            else:
+                df_valid = df_stats[valid_stats_mask].copy()
+                df_valid["shelf_days"] = df_valid["shelf_life_h"] / 24.0
 
-        df_valid = df_stats[valid_stats_mask].copy()
-        df_valid["shelf_days"] = df_valid["shelf_life_h"] / 24.0
+                worst_row = df_valid.loc[df_valid["shelf_days"].idxmin()]
+                best_row = df_valid.loc[df_valid["shelf_days"].idxmax()]
 
-        worst_row = df_valid.loc[df_valid["shelf_days"].idxmin()]
-        best_row = df_valid.loc[df_valid["shelf_days"].idxmax()]
+                st.write(
+                    f"**Worst-case run_id:** {int(worst_row['run_id'])}, "
+                    f"shelf life ≈ {worst_row['shelf_days']:.2f} days"
+                )
+                st.write(
+                    f"**Best-case run_id:** {int(best_row['run_id'])}, "
+                    f"shelf life ≈ {best_row['shelf_days']:.2f} days"
+                )
 
-        st.write(
-            f"**Worst-case run_id:** {int(worst_row['run_id'])}, "
-            f"shelf life ≈ {worst_row['shelf_days']:.2f} days"
-        )
-        st.write(
-            f"**Best-case run_id:** {int(best_row['run_id'])}, "
-            f"shelf life ≈ {best_row['shelf_days']:.2f} days"
-        )
+                sim = DynamicSimulator(model=model, kinetics=kinetics)
 
-        sim = DynamicSimulator(model=model, kinetics=kinetics)
+                def _get_segment(run_row):
+                    # Reconstruct the rotated profile used for this run
+                    start_idx = int(run_row["start_idx"])
+                    
+                    # Roll temperatures
+                    T_rotated = np.roll(temps_C_full, -start_idx)
+                    
+                    # Reconstruct time axis
+                    # We need dts and dt_last which are in the outer scope
+                    dts = np.diff(times_h_full)
+                    dts = np.append(dts, dt_last)
+                    dts_rotated = np.roll(dts, -start_idx)
+                    t_local = np.concatenate(([0.0], np.cumsum(dts_rotated[:-1])))
+                    
+                    return t_local.tolist(), T_rotated.tolist()
 
-        def _get_segment(run_row):
-            # Reconstruct the rotated profile used for this run
-            start_idx = int(run_row["start_idx"])
-            
-            # Roll temperatures
-            T_rotated = np.roll(temps_C_full, -start_idx)
-            
-            # Reconstruct time axis
-            # We need dts and dt_last which are in the outer scope
-            dts = np.diff(times_h_full)
-            dts = np.append(dts, dt_last)
-            dts_rotated = np.roll(dts, -start_idx)
-            t_local = np.concatenate(([0.0], np.cumsum(dts_rotated[:-1])))
-            
-            return t_local.tolist(), T_rotated.tolist()
+                t_worst, T_worst = _get_segment(worst_row)
+                t_best, T_best = _get_segment(best_row)
 
-        t_worst, T_worst = _get_segment(worst_row)
-        t_best, T_best = _get_segment(best_row)
+                res_worst = sim.integrate_profile(t_worst, T_worst, max_days=window_days, cycles=1)
+                res_best = sim.integrate_profile(t_best, T_best, max_days=window_days, cycles=1)
 
-        res_worst = sim.integrate_profile(t_worst, T_worst, max_days=window_days, cycles=1)
-        res_best = sim.integrate_profile(t_best, T_best, max_days=window_days, cycles=1)
-
-        # Render worst / best side-by-side for easier comparison
-        col_w, col_b = st.columns(2)
-        with col_w:
-            st.markdown("#### 🔴 Worst-case profile (shortest shelf life)")
-            if res_worst.history:
-                df_worst = pd.DataFrame(res_worst.history)
-                _plot_single_history(df_worst, k_unit=k_output_unit)
-        with col_b:
-            st.markdown("#### 🟢 Best-case profile (longest shelf life)")
-            if res_best.history:
-                df_best = pd.DataFrame(res_best.history)
-                _plot_single_history(df_best, k_unit=k_output_unit)
+                # Render worst / best side-by-side for easier comparison
+                col_w, col_b = st.columns(2)
+                with col_w:
+                    st.markdown("#### 🔴 Worst-case profile (shortest shelf life)")
+                    if res_worst.history:
+                        df_worst = pd.DataFrame(res_worst.history)
+                        _plot_single_history(df_worst, k_unit=k_output_unit)
+                with col_b:
+                    st.markdown("#### 🟢 Best-case profile (longest shelf life)")
+                    if res_best.history:
+                        df_best = pd.DataFrame(res_best.history)
+                        _plot_single_history(df_best, k_unit=k_output_unit)
